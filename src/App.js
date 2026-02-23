@@ -424,7 +424,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
             {loading ? <p style={{ color: "#64748b" }}>Loading passage...</p> : (
               <div>
                 <div style={{ fontSize: 13, color: translation === "NIV" ? "#22c55e" : "#f59e0b", marginBottom: 16 }}>
-                  {translation === "NIV" ? "✓ NIV translation loaded" : "⚠ Using KJV — add API key in Settings for NIV"}
+                  {translation === "NIV" ? "✓ NIV translation loaded" : "⚠ Loading KJV..."}
                 </div>
                 <button onClick={() => { setStarted(true); setStep(0); }} style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 16, color: "white", fontSize: 18, fontWeight: 600, padding: "16px 48px", cursor: "pointer" }}>Start Devotional</button>
               </div>
@@ -599,8 +599,9 @@ function SettingsScreen({ onBack, settings, onSettings }) {
       const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("en"));
       setVoices(available);
       if (!voiceName && available.length) {
-        const siri = available.find(v => v.name.toLowerCase().includes("siri"));
-        if (siri) setVoiceName(siri.name);
+        const preferred = available.find(v => v.name.toLowerCase().includes("samantha"))
+          || available.find(v => v.name.toLowerCase().includes("siri"));
+        if (preferred) setVoiceName(preferred.name);
       }
     };
     load();
