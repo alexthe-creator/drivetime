@@ -95,7 +95,7 @@ const STEP_LABELS = { beStill: "Be Still", firstReading: "Read", secondReading: 
 // ============================================================
 // TTS HOOK
 // ============================================================
-function useTTS() {
+function useTTS(voiceName) {
   const synth = window.speechSynthesis;
   const [speaking, setSpeaking] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -106,13 +106,17 @@ function useTTS() {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = rate;
     u.lang = "en-US";
+    if (voiceName) {
+      const v = synth.getVoices().find(v => v.name === voiceName);
+      if (v) u.voice = v;
+    }
     onEndRef.current = onEnd;
     u.onend = () => { setSpeaking(false); setPaused(false); if (onEndRef.current) onEndRef.current(); };
     u.onerror = () => { setSpeaking(false); setPaused(false); if (onEndRef.current) onEndRef.current(); };
     setSpeaking(true);
     setPaused(false);
     synth.speak(u);
-  }, [synth]);
+  }, [synth, voiceName]);
 
   const pause = useCallback(() => { synth.pause(); setPaused(true); }, [synth]);
   const resume = useCallback(() => { synth.resume(); setPaused(false); }, [synth]);
@@ -219,8 +223,8 @@ function buildPassageId(ref) {
 function App() {
   const [screen, setScreen] = useState("dashboard");
   const [time, setTime] = useState("");
-  const [settings, setSettings] = useState({ speed: 1, bibleSpeed1: 1, bibleSpeed2: 0.8, beStill: 60, threshold: 100, bibleApiKey: "" });
-  const tts = useTTS();
+  const [settings, setSettings] = useState({ speed: 1, bibleSpeed1: 1, bibleSpeed2: 0.8, beStill: 60, threshold: 100, bibleApiKey: process.env.REACT_APP_BIBLE_API_KEY || "", voiceName: "", newsletterApiUrl: process.env.REACT_APP_NEWSLETTER_API_URL || "" });
+  const tts = useTTS(settings.voiceName);
 
   useEffect(() => {
     const tick = () => setTime(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
@@ -318,6 +322,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
   const [loading, setLoading] = useState(false);
   const [translation, setTranslation] = useState("KJV");
   const activeRef = useRef(true);
+  const skipBeStillRef = useRef(false);
   const currentStep = STEPS[step];
 
   useEffect(() => {
@@ -348,6 +353,16 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
     if (waiting && voice.lastHeard.includes("continue")) advanceFromWait();
   }, [voice.lastHeard, waiting]);
 
+  useEffect(() => {
+    if (!started || step !== 0) return;
+    if (voice.lastHeard.includes("continue")) {
+      skipBeStillRef.current = true;
+      tts.stop();
+      setSilenceLeft(0);
+      playChime().then(() => { if (activeRef.current) setStep(1); });
+    }
+  }, [voice.lastHeard]);
+
   const advanceFromWait = () => {
     if (!waiting) return;
     setWaiting(false);
@@ -359,10 +374,10 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
     const s = STEPS[step];
     if (s === "beStill") {
       tts.speak(PROMPTS.beStill, 1, async () => {
-        if (!activeRef.current) return;
+        if (!activeRef.current || skipBeStillRef.current) return;
         await playChime();
         const dur = settings?.beStill || 60;
-        for (let i = dur; i > 0; i--) { if (!activeRef.current) return; setSilenceLeft(i); await new Promise(r => setTimeout(r, 1000)); }
+        for (let i = dur; i > 0; i--) { if (!activeRef.current || skipBeStillRef.current) return; setSilenceLeft(i); await new Promise(r => setTimeout(r, 1000)); }
         setSilenceLeft(0); await playChime();
         if (activeRef.current) setStep(1);
       });
@@ -383,6 +398,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
     }
   }, [step, started]);
 
+  useEffect(() => { voice.start(); return () => voice.stop(); }, []);
   useEffect(() => () => { activeRef.current = false; tts.stop(); }, []);
 
   const stepColor = (i) => i < step ? "#22c55e" : i === step ? "#818cf8" : "#334155";
@@ -464,10 +480,35 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
   const [playing, setPlaying] = useState(false);
   const [sections, setSections] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [fetching, setFetching] = useState(false);
+  const [fetchedData, setFetchedData] = useState({ ft: "", axios: "" });
   const threshold = settings?.threshold || 100;
   const activeRef = useRef(true);
 
+  useEffect(() => { voice.start(); return () => voice.stop(); }, []);
   useEffect(() => () => { activeRef.current = false; tts.stop(); }, []);
+
+  useEffect(() => {
+    const url = settings?.newsletterApiUrl;
+    if (!url) return;
+    setFetching(true);
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        const next = {
+          ft: data.ft?.body || "",
+          axios: data.axios?.body || "",
+        };
+        setFetchedData(next);
+        setContent(next[source] || "");
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, []);
+
+  useEffect(() => {
+    if (fetchedData[source]) setContent(fetchedData[source]);
+  }, [source]);
 
   const parseContent = () => {
     const paras = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
@@ -509,7 +550,10 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
             ))}
           </div>
           {source === "axios" && <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#fbbf24" }}>💡 VC deals under ${threshold}M will be skipped</div>}
-          <textarea value={content} onChange={e => setContent(e.target.value)} placeholder={`Paste your ${source === "ft" ? "Financial Times" : "Axios Pro Rata"} newsletter here...\n\nSeparate sections with blank lines.`} style={{ width: "100%", minHeight: 200, background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: 14, padding: 16, color: "#e2e8f0", fontSize: 15, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }} />
+          {fetching
+            ? <div style={{ textAlign: "center", padding: "40px 0", color: "#64748b", fontSize: 15 }}>Fetching today's newsletter...</div>
+            : <textarea value={content} onChange={e => setContent(e.target.value)} placeholder={`Paste your ${source === "ft" ? "Financial Times" : "Axios Pro Rata"} newsletter here...\n\nSeparate sections with blank lines.`} style={{ width: "100%", minHeight: 200, background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: 14, padding: 16, color: "#e2e8f0", fontSize: 15, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }} />
+          }
           <button onClick={startReading} disabled={!content.trim()} style={{ width: "100%", padding: 16, borderRadius: 14, border: "none", background: content.trim() ? "linear-gradient(135deg, #3b82f6, #6366f1)" : "#1e293b", color: content.trim() ? "white" : "#475569", fontSize: 17, fontWeight: 600, cursor: content.trim() ? "pointer" : "default", marginTop: 16 }}>▶ Start Reading</button>
         </div>
       ) : (
@@ -545,11 +589,26 @@ function SettingsScreen({ onBack, settings, onSettings }) {
   const [bibleSpeed2, setBibleSpeed2] = useState(settings?.bibleSpeed2 || 0.8);
   const [beStill, setBeStill] = useState(settings?.beStill || 60);
   const [threshold, setThreshold] = useState(settings?.threshold || 100);
-  const [apiKey, setApiKey] = useState(settings?.bibleApiKey || "");
+  const [newsletterApiUrl, setNewsletterApiUrl] = useState(settings?.newsletterApiUrl || "");
+  const [voiceName, setVoiceName] = useState(settings?.voiceName || "");
+  const [voices, setVoices] = useState([]);
   const [saved, setSaved] = useState(false);
 
+  useEffect(() => {
+    const load = () => {
+      const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("en"));
+      setVoices(available);
+      if (!voiceName && available.length) {
+        const siri = available.find(v => v.name.toLowerCase().includes("siri"));
+        if (siri) setVoiceName(siri.name);
+      }
+    };
+    load();
+    speechSynthesis.onvoiceschanged = load;
+  }, []);
+
   const saveAll = () => {
-    onSettings({ speed, bibleSpeed1, bibleSpeed2, beStill, threshold, bibleApiKey: apiKey });
+    onSettings({ speed, bibleSpeed1, bibleSpeed2, beStill, threshold, bibleApiKey: settings?.bibleApiKey, voiceName, newsletterApiUrl });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -559,17 +618,17 @@ function SettingsScreen({ onBack, settings, onSettings }) {
       <button onClick={onBack} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 15, cursor: "pointer", padding: 0, marginBottom: 20 }}>← Back</button>
       <h2 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 24px" }}>⚙ Settings</h2>
 
-      <SectionBox title="Bible API Key (API.Bible)">
-        <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 10px", lineHeight: 1.5 }}>Enter your API.Bible key for NIV translation.</p>
-        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Paste API key here" style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0", padding: "10px 14px", fontSize: 14, fontFamily: "monospace", boxSizing: "border-box" }} />
-        {apiKey ? <div style={{ marginTop: 8, fontSize: 13, color: "#22c55e" }}>✓ Key entered ({apiKey.slice(0, 8)}...)</div> : <div style={{ marginTop: 8, fontSize: 13, color: "#f59e0b" }}>⚠ Without a key, KJV will be used</div>}
+      <SectionBox title="Voice">
+        <select value={voiceName} onChange={e => setVoiceName(e.target.value)} style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0", padding: "10px 12px", fontSize: 14, marginBottom: 10 }}>
+          {voices.map(v => <option key={v.name} value={v.name}>{v.name}{v.localService ? "" : " (online)"}</option>)}
+        </select>
+        <button onClick={() => { const u = new SpeechSynthesisUtterance("The Lord is my shepherd, I shall not want."); u.rate = speed; const v = voices.find(v => v.name === voiceName); if (v) u.voice = v; speechSynthesis.cancel(); speechSynthesis.speak(u); }} style={{ background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 10, color: "#a5b4fc", padding: "10px 20px", cursor: "pointer", fontSize: 14, width: "100%" }}>🔊 Preview Voice</button>
       </SectionBox>
 
       <SectionBox title="Reading Speeds">
         <SliderRow label="Newsletters" value={speed} onChange={setSpeed} />
         <SliderRow label="Bible 1st reading" value={bibleSpeed1} onChange={setBibleSpeed1} />
         <SliderRow label="Bible 2nd reading" value={bibleSpeed2} onChange={setBibleSpeed2} />
-        <button onClick={() => { const u = new SpeechSynthesisUtterance("The Lord is my shepherd."); u.rate = speed; speechSynthesis.speak(u); }} style={{ background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 10, color: "#a5b4fc", padding: "10px 20px", cursor: "pointer", fontSize: 14, marginTop: 8, width: "100%" }}>🔊 Test Voice</button>
       </SectionBox>
 
       <SectionBox title="BREAD Devotional">
@@ -581,11 +640,13 @@ function SettingsScreen({ onBack, settings, onSettings }) {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" }}>
           <span style={{ fontSize: 14, color: "#94a3b8" }}>Translation</span>
-          <span style={{ fontSize: 14, color: apiKey ? "#22c55e" : "#64748b" }}>{apiKey ? "NIV (API.Bible)" : "KJV (free)"}</span>
+          <span style={{ fontSize: 14, color: "#22c55e" }}>NIV (API.Bible)</span>
         </div>
       </SectionBox>
 
       <SectionBox title="Newsletters">
+        <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 10px", lineHeight: 1.5 }}>Newsletter API URL (from Google Apps Script)</p>
+        <input type="text" value={newsletterApiUrl} onChange={e => setNewsletterApiUrl(e.target.value)} placeholder="https://script.google.com/macros/s/..." style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0", padding: "10px 14px", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box", marginBottom: 12 }} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" }}>
           <span style={{ fontSize: 14, color: "#94a3b8" }}>Axios VC threshold</span>
           <select value={threshold} onChange={e => setThreshold(+e.target.value)} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0", padding: "6px 12px", fontSize: 14 }}>
