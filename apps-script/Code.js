@@ -1,10 +1,7 @@
 function doGet(e) {
-  const tz = Session.getScriptTimeZone();
-  const today = Utilities.formatDate(new Date(), tz, "yyyy/MM/dd");
-
   const result = {
-    ft: fetchNewsletter("from:(@ft.com OR @news.ft.com OR @email.ft.com)", today),
-    axios: fetchNewsletter("from:(@axios.com) subject:\"Pro Rata\"", today),
+    ft: fetchNewsletter("subject:(\"FirstFT\" OR \"FT Morning\" OR \"FT Weekend\" OR \"FT Daily\" OR \"Financial Times\" OR \"Markets Today\")"),
+    axios: fetchNewsletter("subject:\"Pro Rata\""),
   };
 
   const output = ContentService.createTextOutput(JSON.stringify(result));
@@ -12,9 +9,9 @@ function doGet(e) {
   return output;
 }
 
-function fetchNewsletter(query, dateStr) {
+function fetchNewsletter(query) {
   try {
-    const threads = GmailApp.search(query + " after:" + dateStr, 0, 1);
+    const threads = GmailApp.search(query, 0, 1);
     if (!threads.length) return null;
 
     const msg = threads[0].getMessages().pop();

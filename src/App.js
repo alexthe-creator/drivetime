@@ -494,7 +494,10 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
   const [sections, setSections] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [fetching, setFetching] = useState(false);
-  const [fetchedData, setFetchedData] = useState({ ft: "", axios: "" });
+  const [fetchedData, setFetchedData] = useState({ ft: "", axios: "", ftDate: null, axiosDate: null });
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const listenedKey = (k) => `drivetime_listened_${k}_${todayStr}`;
+  const [listened, setListened] = useState({ ft: !!localStorage.getItem(listenedKey("ft")), axios: !!localStorage.getItem(listenedKey("axios")) });
   const threshold = settings?.threshold || 100;
   const activeRef = useRef(true);
 
@@ -511,6 +514,8 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
         const next = {
           ft: data.ft?.body || "",
           axios: data.axios?.body || "",
+          ftDate: data.ft?.date || null,
+          axiosDate: data.axios?.date || null,
         };
         setFetchedData(next);
         setContent(next[source] || "");
@@ -546,7 +551,7 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
     tts.speak(secs[i].text, settings?.speed || 1, () => { if (activeRef.current) readSection(secs, i + 1); });
   };
 
-  const startReading = () => { const p = parseContent(); setSections(p); setCurrentIdx(0); setPlaying(true); readSection(p, 0); };
+  const startReading = () => { const p = parseContent(); setSections(p); setCurrentIdx(0); setPlaying(true); readSection(p, 0); localStorage.setItem(listenedKey(source), "1"); setListened(l => ({ ...l, [source]: true })); };
   const skipSection = () => { tts.stop(); if (currentIdx + 1 < sections.length) readSection(sections, currentIdx + 1); else setPlaying(false); };
 
   useEffect(() => { if (playing && voice.lastHeard.includes("skip")) skipSection(); }, [voice.lastHeard]);
@@ -558,9 +563,20 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
       {!playing ? (
         <div>
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            {[["ft", "Financial Times"], ["axios", "Axios Pro Rata"]].map(([k, label]) => (
-              <button key={k} onClick={() => setSource(k)} style={{ flex: 1, padding: 12, borderRadius: 12, border: source === k ? "2px solid #6366f1" : "1px solid #334155", background: source === k ? "rgba(99,102,241,0.1)" : "rgba(255,255,255,0.03)", color: source === k ? "#c7d2fe" : "#94a3b8", cursor: "pointer", fontSize: 14, fontWeight: 600 }}>{label}</button>
-            ))}
+            {[["ft", "Financial Times", fetchedData.ftDate], ["axios", "Axios Pro Rata", fetchedData.axiosDate]].map(([k, label, date]) => {
+              const hasToday = date && new Date(date).toISOString().slice(0, 10) === todayStr;
+              const done = listened[k];
+              const isActive = source === k;
+              const borderColor = done ? "#475569" : hasToday ? "#22c55e" : "#ef4444";
+              const bgColor = done ? "rgba(71,85,105,0.15)" : hasToday ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.08)";
+              const textColor = done ? "#64748b" : hasToday ? (isActive ? "#86efac" : "#4ade80") : "#f87171";
+              const indicator = done ? "✓ " : hasToday ? "● " : "";
+              return (
+                <button key={k} onClick={() => setSource(k)} style={{ flex: 1, padding: 12, borderRadius: 12, border: isActive ? `2px solid ${borderColor}` : `1px solid ${borderColor}`, background: isActive ? bgColor : "rgba(255,255,255,0.03)", color: textColor, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+                  {indicator}{label}
+                </button>
+              );
+            })}
           </div>
           {source === "axios" && <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#fbbf24" }}>💡 VC deals under ${threshold}M will be skipped</div>}
           {fetching
