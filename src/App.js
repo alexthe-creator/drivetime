@@ -529,16 +529,50 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
   }, [source]);
 
   const parseContent = () => {
-    const paras = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
     if (source === "axios") {
-      return paras.map(p => {
-        const amtMatch = p.match(/\$(\d+(?:\.\d+)?)\s*(m|million|b|billion)/i);
+      const lines = content.split("\n");
+      const isJunk = (l) => {
+        const t = l.trim();
+        if (!t || t.length < 4) return true;
+        if (/^illustration/i.test(t)) return true;
+        if (/^\[illustration/i.test(t)) return true;
+        if (/^\[?https?:\/\//i.test(t)) return true;
+        if (/^(share|tweet|forward|subscribe|view in browser|unsubscribe|manage|follow us)/i.test(t)) return true;
+        if (/^(from:|sent:|to:|subject:|cc:)/i.test(t)) return true;
+        if (/^\[axios\]/i.test(t)) return true;
+        if (/^by [\w]+ · /i.test(t)) return true;
+        return false;
+      };
+      const HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i, /^deals & /i];
+      const chunks = [];
+      let title = "";
+      let body = [];
+      let inContent = false;
+      const flush = () => {
+        const text = body.filter(l => !isJunk(l)).join(" ").replace(/\s+/g, " ").trim();
+        if (text.length > 40) chunks.push(title ? `${title}. ${text}` : text);
+        body = [];
+      };
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!inContent) {
+          if (/^(axios pro rata|top of the morning)/i.test(line)) inContent = true;
+          if (!/^top of the morning/i.test(line)) continue;
+        }
+        const hdr = HEADERS.find(r => r.test(line));
+        if (hdr) { flush(); title = line; continue; }
+        body.push(line);
+      }
+      flush();
+      return chunks.map(text => {
+        const amtMatch = text.match(/\$(\d+(?:\.\d+)?)\s*(m|million|b|billion)/i);
         let amount = 0;
         if (amtMatch) { amount = parseFloat(amtMatch[1]); if (amtMatch[2].toLowerCase().startsWith("b")) amount *= 1000; }
-        const isVC = /venture|vc|raised|funding|round|series/i.test(p);
-        return { text: p, included: !isVC || amount >= threshold, amount, isVC };
+        const isVC = /venture|vc|raised|funding|round|series/i.test(text);
+        return { text, included: !isVC || amount >= threshold, amount, isVC };
       });
     }
+    const paras = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
     return paras.map(p => ({ text: p, included: true, amount: 0, isVC: false }));
   };
 
