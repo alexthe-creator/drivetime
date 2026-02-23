@@ -544,7 +544,7 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
         return false;
       };
       // Section headers that read as one big chunk
-      const BIG_HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i];
+      const BIG_HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i, /^public offering/i, /^liquidity event/i, /^(more )?m&a/i, /^it'?s personal/i];
       // Section headers where each deal is its own chunk
       const DEAL_HEADERS = [/^venture capital/i, /^private equity/i];
       // Sections to skip entirely (ads, promos)
