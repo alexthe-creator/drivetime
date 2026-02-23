@@ -543,32 +543,49 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
         if (/^by [\w]+ · /i.test(t)) return true;
         return false;
       };
-      const HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i, /^deals & /i];
+      // Section headers that read as one big chunk
+      const BIG_HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i];
+      // Section headers where each deal is its own chunk
+      const DEAL_HEADERS = [/^venture capital/i, /^private equity/i];
+      // Sections to skip entirely (ads, promos)
+      const SKIP_HEADERS = [/^message from axios/i, /^a message from/i, /^sponsored/i, /^advertisement/i];
+
       const chunks = [];
       let title = "";
       let body = [];
       let inContent = false;
-      const flush = () => {
+      let dealMode = false;
+      let skipMode = false;
+
+      const flushChunk = () => {
         const text = body.filter(l => !isJunk(l)).join(" ").replace(/\s+/g, " ").trim();
         if (text.length > 40) chunks.push(title ? `${title}. ${text}` : text);
         body = [];
       };
+
       for (const raw of lines) {
         const line = raw.trim();
         if (!inContent) {
           if (/^(axios pro rata|top of the morning)/i.test(line)) inContent = true;
           if (!/^top of the morning/i.test(line)) continue;
         }
-        const hdr = HEADERS.find(r => r.test(line));
-        if (hdr) { flush(); title = line; continue; }
-        body.push(line);
+        if (BIG_HEADERS.find(r => r.test(line))) { flushChunk(); title = line; dealMode = false; skipMode = false; continue; }
+        if (DEAL_HEADERS.find(r => r.test(line))) { flushChunk(); title = ""; dealMode = true; skipMode = false; continue; }
+        if (SKIP_HEADERS.find(r => r.test(line))) { flushChunk(); skipMode = true; dealMode = false; continue; }
+        if (skipMode) continue;
+        if (dealMode) {
+          if (!line) { flushChunk(); } else { body.push(line); }
+        } else {
+          body.push(line);
+        }
       }
-      flush();
+      flushChunk();
+
       return chunks.map(text => {
         const amtMatch = text.match(/\$(\d+(?:\.\d+)?)\s*(m|million|b|billion)/i);
         let amount = 0;
         if (amtMatch) { amount = parseFloat(amtMatch[1]); if (amtMatch[2].toLowerCase().startsWith("b")) amount *= 1000; }
-        const isVC = /venture|vc|raised|funding|round|series/i.test(text);
+        const isVC = dealMode || /venture|vc|raised|funding|round|series/i.test(text);
         return { text, included: !isVC || amount >= threshold, amount, isVC };
       });
     }
