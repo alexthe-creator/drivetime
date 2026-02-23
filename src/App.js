@@ -332,7 +332,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
       const nivId = "78a9f6124f344018-01";
       const pid = buildPassageId(plan.ref);
       if (pid) {
-        fetch(`https://api.scripture.api.bible/v1/bibles/${nivId}/passages/${encodeURIComponent(pid)}?content-type=text&include-notes=false&include-titles=true&include-chapter-numbers=false&include-verse-numbers=false`, { headers: { "api-key": apiKey } })
+        fetch(`https://rest.api.bible/v1/bibles/${nivId}/passages/${encodeURIComponent(pid)}?content-type=text&include-notes=false&include-titles=true&include-chapter-numbers=false&include-verse-numbers=false`, { headers: { "api-key": apiKey } })
           .then(r => r.json())
           .then(d => {
             if (d.data?.content) { setPassageText(d.data.content.replace(/\s+/g, " ").replace(/¶/g, "").trim()); setTranslation("NIV"); }
