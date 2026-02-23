@@ -474,8 +474,10 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
       {started && currentStep !== "complete" && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "20px", display: "flex", justifyContent: "center", gap: 24, background: "linear-gradient(transparent, #0f172a)" }}>
           <button onClick={tts.paused ? tts.resume : tts.pause} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#e2e8f0", fontSize: 24, cursor: "pointer" }}>{tts.paused ? "▶" : "⏸"}</button>
-          <button onClick={skipToNext} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc", fontSize: 24, cursor: "pointer" }}>⏭</button>
           <button onClick={() => { activeRef.current = false; tts.stop(); onBack(); }} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", color: "#fca5a5", fontSize: 24, cursor: "pointer" }}>■</button>
+          {["beStill", "firstReading", "secondReading"].includes(currentStep) && (
+            <button onClick={skipToNext} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc", fontSize: 24, cursor: "pointer" }}>⏭</button>
+          )}
         </div>
       )}
     </div>
