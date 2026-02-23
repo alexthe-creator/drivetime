@@ -488,17 +488,16 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
 // NEWSLETTER SCREEN
 // ============================================================
 function NewsletterScreen({ tts, voice, settings, onBack }) {
-  const [content, setContent] = useState("");
   const [source, setSource] = useState("ft");
   const [playing, setPlaying] = useState(false);
   const [sections, setSections] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [fetching, setFetching] = useState(false);
-  const [fetchedData, setFetchedData] = useState({ ft: "", axios: "", ftDate: null, axiosDate: null });
+  const [fetchedData, setFetchedData] = useState({ ft: null, axios: null });
+  const [manualContent, setManualContent] = useState("");
   const todayStr = new Date().toISOString().slice(0, 10);
   const listenedKey = (k) => `drivetime_listened_${k}_${todayStr}`;
   const [listened, setListened] = useState({ ft: !!localStorage.getItem(listenedKey("ft")), axios: !!localStorage.getItem(listenedKey("axios")) });
-  const threshold = settings?.threshold || 100;
   const activeRef = useRef(true);
 
   useEffect(() => { voice.start(); return () => voice.stop(); }, []);
@@ -508,101 +507,42 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
     const url = settings?.newsletterApiUrl;
     if (!url) return;
     setFetching(true);
-    fetch(url)
+    const threshold = settings?.threshold || 100;
+    fetch(`${url}?threshold=${threshold}`)
       .then(r => r.json())
       .then(data => {
-        const next = {
-          ft: data.ft?.body || "",
-          axios: data.axios?.body || "",
-          ftDate: data.ft?.date || null,
-          axiosDate: data.axios?.date || null,
-        };
-        setFetchedData(next);
-        setContent(next[source] || "");
+        setFetchedData({ ft: data.ft || null, axios: data.axios || null });
       })
       .catch(() => {})
       .finally(() => setFetching(false));
   }, []);
 
-  useEffect(() => {
-    if (fetchedData[source]) setContent(fetchedData[source]);
-  }, [source]);
-
-  const parseContent = () => {
-    if (source === "axios") {
-      const lines = content.split("\n");
-      const isJunk = (l) => {
-        const t = l.trim();
-        if (!t || t.length < 4) return true;
-        if (/^illustration/i.test(t)) return true;
-        if (/^\[illustration/i.test(t)) return true;
-        if (/^\[?https?:\/\//i.test(t)) return true;
-        if (/^(share|tweet|forward|subscribe|view in browser|unsubscribe|manage|follow us)/i.test(t)) return true;
-        if (/^(from:|sent:|to:|subject:|cc:)/i.test(t)) return true;
-        if (/^\[axios\]/i.test(t)) return true;
-        if (/^by [\w]+ · /i.test(t)) return true;
-        return false;
-      };
-      // Section headers that read as one big chunk
-      const BIG_HEADERS = [/^top of the morning/i, /^the bfd\b/i, /^the bottom line/i, /^by the numbers/i, /^public offering/i, /^liquidity event/i, /^(more )?m&a/i, /^it'?s personal/i];
-      // Section headers where each deal is its own chunk
-      const DEAL_HEADERS = [/^venture capital/i, /^private equity/i];
-      // Sections to skip entirely (ads, promos)
-      const SKIP_HEADERS = [/^message from axios/i, /^a message from/i, /^sponsored/i, /^advertisement/i];
-
-      const chunks = [];
-      let title = "";
-      let body = [];
-      let inContent = false;
-      let dealMode = false;
-      let skipMode = false;
-
-      const flushChunk = () => {
-        const text = body.filter(l => !isJunk(l)).join(" ").replace(/\s+/g, " ").trim();
-        if (text.length > 40) chunks.push(title ? `${title}. ${text}` : text);
-        body = [];
-      };
-
-      for (const raw of lines) {
-        const line = raw.trim();
-        if (!inContent) {
-          if (/^(axios pro rata|top of the morning)/i.test(line)) inContent = true;
-          if (!/^top of the morning/i.test(line)) continue;
-        }
-        if (BIG_HEADERS.find(r => r.test(line))) { flushChunk(); title = line; dealMode = false; skipMode = false; continue; }
-        if (DEAL_HEADERS.find(r => r.test(line))) { flushChunk(); title = ""; dealMode = true; skipMode = false; continue; }
-        if (SKIP_HEADERS.find(r => r.test(line))) { flushChunk(); skipMode = true; dealMode = false; continue; }
-        if (skipMode) continue;
-        if (dealMode) {
-          if (!line) { flushChunk(); } else { body.push(line); }
-        } else {
-          body.push(line);
-        }
-      }
-      flushChunk();
-
-      return chunks.map(text => {
-        const amtMatch = text.match(/\$(\d+(?:\.\d+)?)\s*(m|million|b|billion)/i);
-        let amount = 0;
-        if (amtMatch) { amount = parseFloat(amtMatch[1]); if (amtMatch[2].toLowerCase().startsWith("b")) amount *= 1000; }
-        const isVC = dealMode || /venture|vc|raised|funding|round|series/i.test(text);
-        return { text, included: !isVC || amount >= threshold, amount, isVC };
-      });
-    }
-    const paras = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
-    return paras.map(p => ({ text: p, included: true, amount: 0, isVC: false }));
-  };
+  const currentData = fetchedData[source];
+  const hasSections = (currentData?.sections?.length || 0) > 0;
+  const canStart = hasSections || manualContent.trim().length > 0;
 
   const readSection = (secs, idx) => {
     if (!activeRef.current) return;
-    let i = idx;
-    while (i < secs.length && !secs[i].included) i++;
-    if (i >= secs.length) { tts.speak("All newsletters complete.", 1, () => setPlaying(false)); return; }
-    setCurrentIdx(i);
-    tts.speak(secs[i].text, settings?.speed || 1, () => { if (activeRef.current) readSection(secs, i + 1); });
+    if (idx >= secs.length) { tts.speak("All done.", 1, () => setPlaying(false)); return; }
+    setCurrentIdx(idx);
+    tts.speak(secs[idx].text, settings?.speed || 1, () => { if (activeRef.current) readSection(secs, idx + 1); });
   };
 
-  const startReading = () => { const p = parseContent(); setSections(p); setCurrentIdx(0); setPlaying(true); readSection(p, 0); localStorage.setItem(listenedKey(source), "1"); setListened(l => ({ ...l, [source]: true })); };
+  const startReading = () => {
+    let secs;
+    if (hasSections) {
+      secs = currentData.sections.map(text => ({ text }));
+    } else {
+      secs = manualContent.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0).map(p => ({ text: p }));
+    }
+    setSections(secs);
+    setCurrentIdx(0);
+    setPlaying(true);
+    readSection(secs, 0);
+    localStorage.setItem(listenedKey(source), "1");
+    setListened(l => ({ ...l, [source]: true }));
+  };
+
   const skipSection = () => { tts.stop(); if (currentIdx + 1 < sections.length) readSection(sections, currentIdx + 1); else setPlaying(false); };
 
   useEffect(() => { if (playing && voice.lastHeard.includes("skip")) skipSection(); }, [voice.lastHeard]);
@@ -614,7 +554,9 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
       {!playing ? (
         <div>
           <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            {[["ft", "Financial Times", fetchedData.ftDate], ["axios", "Axios Pro Rata", fetchedData.axiosDate]].map(([k, label, date]) => {
+            {[["ft", "Financial Times"], ["axios", "Axios Pro Rata"]].map(([k, label]) => {
+              const data = fetchedData[k];
+              const date = data?.date;
               const hasToday = date && new Date(date).toISOString().slice(0, 10) === todayStr;
               const done = listened[k];
               const isActive = source === k;
@@ -629,26 +571,41 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
               );
             })}
           </div>
-          {source === "axios" && <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#fbbf24" }}>💡 VC deals under ${threshold}M will be skipped</div>}
-          {fetching
-            ? <div style={{ textAlign: "center", padding: "40px 0", color: "#64748b", fontSize: 15 }}>Fetching today's newsletter...</div>
-            : <textarea value={content} onChange={e => setContent(e.target.value)} placeholder={`Paste your ${source === "ft" ? "Financial Times" : "Axios Pro Rata"} newsletter here...\n\nSeparate sections with blank lines.`} style={{ width: "100%", minHeight: 200, background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: 14, padding: 16, color: "#e2e8f0", fontSize: 15, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }} />
-          }
-          <button onClick={startReading} disabled={!content.trim()} style={{ width: "100%", padding: 16, borderRadius: 14, border: "none", background: content.trim() ? "linear-gradient(135deg, #3b82f6, #6366f1)" : "#1e293b", color: content.trim() ? "white" : "#475569", fontSize: 17, fontWeight: 600, cursor: content.trim() ? "pointer" : "default", marginTop: 16 }}>▶ Start Reading</button>
+          {fetching ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: "#64748b", fontSize: 15 }}>Fetching today's newsletter...</div>
+          ) : hasSections ? (
+            <div style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)", borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
+              <div style={{ fontSize: 15, color: "#86efac", fontWeight: 600, marginBottom: 6 }}>✓ Ready to play</div>
+              <div style={{ fontSize: 13, color: "#64748b" }}>{currentData.sections.length} sections · {currentData.subject}</div>
+            </div>
+          ) : (
+            <div>
+              {settings?.newsletterApiUrl ? (
+                <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#f87171" }}>
+                  Today's newsletter not yet available — paste below as fallback
+                </div>
+              ) : (
+                <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#fbbf24" }}>
+                  💡 Configure Newsletter API URL in Settings for auto-fetch
+                </div>
+              )}
+              <textarea value={manualContent} onChange={e => setManualContent(e.target.value)} placeholder={`Paste your ${source === "ft" ? "Financial Times" : "Axios Pro Rata"} newsletter here...`} style={{ width: "100%", minHeight: 200, background: "rgba(255,255,255,0.05)", border: "1px solid #334155", borderRadius: 14, padding: 16, color: "#e2e8f0", fontSize: 15, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", lineHeight: 1.5 }} />
+            </div>
+          )}
+          <button onClick={startReading} disabled={!canStart} style={{ width: "100%", padding: 16, borderRadius: 14, border: "none", background: canStart ? "linear-gradient(135deg, #3b82f6, #6366f1)" : "#1e293b", color: canStart ? "white" : "#475569", fontSize: 17, fontWeight: 600, cursor: canStart ? "pointer" : "default", marginTop: 16 }}>▶ Start Reading</button>
         </div>
       ) : (
         <div>
           <div style={{ background: "rgba(59,130,246,0.1)", borderRadius: 16, padding: 20, marginBottom: 20, border: "1px solid rgba(59,130,246,0.2)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <span style={{ background: source === "ft" ? "#c08080" : "#3b82f6", color: "white", fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 20 }}>{source === "ft" ? "Financial Times" : "Axios Pro Rata"}</span>
-              <span style={{ fontSize: 13, color: "#64748b" }}>{currentIdx + 1} of {sections.filter(s => s.included).length}</span>
+              <span style={{ fontSize: 13, color: "#64748b" }}>{currentIdx + 1} of {sections.length}</span>
             </div>
             <div style={{ height: 4, background: "#1e293b", borderRadius: 2, marginBottom: 16 }}>
-              <div style={{ height: "100%", background: "#6366f1", borderRadius: 2, width: `${((currentIdx + 1) / Math.max(sections.filter(s => s.included).length, 1)) * 100}%`, transition: "width 0.3s" }} />
+              <div style={{ height: "100%", background: "#6366f1", borderRadius: 2, width: `${((currentIdx + 1) / Math.max(sections.length, 1)) * 100}%`, transition: "width 0.3s" }} />
             </div>
             <p style={{ fontSize: 15, color: "#cbd5e1", lineHeight: 1.5, margin: 0, maxHeight: 120, overflow: "hidden" }}>{sections[currentIdx]?.text?.slice(0, 200)}{(sections[currentIdx]?.text?.length || 0) > 200 ? "..." : ""}</p>
           </div>
-          {source === "axios" && sections.some(s => !s.included) && <div style={{ fontSize: 13, color: "#f59e0b", marginBottom: 16, textAlign: "center" }}>{sections.filter(s => !s.included).length} deal(s) filtered (under ${threshold}M)</div>}
           <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 24 }}>
             <button onClick={tts.paused ? tts.resume : tts.pause} style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "2px solid rgba(99,102,241,0.4)", color: "#a5b4fc", fontSize: 28, cursor: "pointer" }}>{tts.paused ? "▶" : "⏸"}</button>
             <button onClick={skipSection} style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "#94a3b8", fontSize: 28, cursor: "pointer" }}>⏭</button>
