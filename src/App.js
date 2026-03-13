@@ -1,6 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ============================================================
+// AUDIO SESSION ACTIVATION (for CarPlay / car speakers)
+// iOS Safari routes TTS to phone speaker unless we first play
+// audio through an <audio> element from a user gesture.
+// ============================================================
+let _audioSessionActivated = false;
+function activateAudioSession() {
+  if (_audioSessionActivated) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+    // Also create and play a silent HTML audio element
+    const audio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
+    audio.volume = 0.01;
+    audio.play().catch(() => {});
+    _audioSessionActivated = true;
+    // Close the temporary context after a moment
+    setTimeout(() => ctx.close().catch(() => {}), 500);
+  } catch (e) {}
+}
+
+// ============================================================
 // READING PLAN DATA
 // ============================================================
 const READING_PLAN = [
@@ -102,9 +127,11 @@ function useTTS(voiceName) {
   const onEndRef = useRef(null);
 
   const speak = useCallback((text, rate = 1, onEnd) => {
+    activateAudioSession();
     synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = rate;
+    u.volume = 1.0;
     u.lang = "en-US";
     if (voiceName) {
       const v = synth.getVoices().find(v => v.name === voiceName);
@@ -143,6 +170,28 @@ function getAudioContext() {
     _sharedAudioCtx.resume().catch(() => {});
   }
   return _sharedAudioCtx;
+}
+
+// Keep audio session alive during silence (prevents iOS volume changes)
+let _keepAliveOsc = null;
+function startAudioKeepAlive() {
+  try {
+    const ctx = getAudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.001, ctx.currentTime); // inaudible
+    osc.frequency.setValueAtTime(200, ctx.currentTime);
+    osc.start();
+    _keepAliveOsc = { osc, gain };
+  } catch (e) {}
+}
+function stopAudioKeepAlive() {
+  if (_keepAliveOsc) {
+    try { _keepAliveOsc.osc.stop(); } catch (e) {}
+    _keepAliveOsc = null;
+  }
 }
 
 function playChime() {
@@ -415,8 +464,10 @@ const BREADScreen = React.memo(function BREADScreen({ plan, tts, voice, settings
       tts.speak(PROMPTS.beStill, 1, async () => {
         if (!activeRef.current || skipBeStillRef.current) return;
         await playChime();
+        startAudioKeepAlive();
         const dur = settings?.beStill || 60;
-        for (let i = dur; i > 0; i--) { if (!activeRef.current || skipBeStillRef.current) return; setSilenceLeft(i); await new Promise(r => setTimeout(r, 1000)); }
+        for (let i = dur; i > 0; i--) { if (!activeRef.current || skipBeStillRef.current) { stopAudioKeepAlive(); return; } setSilenceLeft(i); await new Promise(r => setTimeout(r, 1000)); }
+        stopAudioKeepAlive();
         setSilenceLeft(0); await playChime();
         if (activeRef.current) setStep(1);
       });
@@ -465,7 +516,7 @@ const BREADScreen = React.memo(function BREADScreen({ plan, tts, voice, settings
                 <div style={{ fontSize: 13, color: translation === "NIV" ? "#22c55e" : "#f59e0b", marginBottom: 16 }}>
                   {translation === "NIV" ? "✓ NIV translation loaded" : "⚠ Loading KJV..."}
                 </div>
-                <button onClick={() => { setStarted(true); setStep(0); }} style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 16, color: "white", fontSize: 18, fontWeight: 600, padding: "16px 48px", cursor: "pointer" }}>Start Devotional</button>
+                <button onClick={() => { activateAudioSession(); setStarted(true); setStep(0); }} style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 16, color: "white", fontSize: 18, fontWeight: 600, padding: "16px 48px", cursor: "pointer" }}>Start Devotional</button>
               </div>
             )}
           </div>
@@ -564,6 +615,7 @@ const NewsletterScreen = React.memo(function NewsletterScreen({ tts, voice, sett
   };
 
   const startReading = () => {
+    activateAudioSession();
     let secs;
     if (hasSections) {
       secs = currentData.sections.map(text => ({ text }));
@@ -667,17 +719,26 @@ const SettingsScreen = React.memo(function SettingsScreen({ onBack, settings, on
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    let retryCount = 0;
     const load = () => {
       const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("en"));
       setVoices(available);
       if (!voiceName && available.length) {
-        const preferred = available.find(v => v.name.toLowerCase().includes("samantha"))
+        const preferred = available.find(v => v.name.toLowerCase().includes("ava"))
+          || available.find(v => v.name.toLowerCase().includes("samantha"))
           || available.find(v => v.name.toLowerCase().includes("siri"));
         if (preferred) setVoiceName(preferred.name);
       }
     };
     load();
     speechSynthesis.onvoiceschanged = load;
+    // iOS sometimes loads premium voices late — poll a few times
+    const poller = setInterval(() => {
+      retryCount++;
+      load();
+      if (retryCount >= 10) clearInterval(poller);
+    }, 1000);
+    return () => clearInterval(poller);
   }, []);
 
   const saveAll = () => {

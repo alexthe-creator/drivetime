@@ -20,6 +20,10 @@
 .env.production.local
 server/.env
 
+# scripts containing secrets
+update-token.ps1
+update-token2.ps1
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
