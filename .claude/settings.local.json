@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/opt/homebrew/bin/gh repo create drivetime --public --source=. --remote=origin --push)"
+      "Bash(/opt/homebrew/bin/gh repo create drivetime --public --source=. --remote=origin --push)",
+      "Bash(rm -f /c/Users/UserA/drivetime/.git/index.lock && git add .gitignore src/App.js && git commit -m \"Fix audio: CarPlay support, consistent volume, retry voice loading\" && git push origin main)",
+      "Bash(git push:*)",
+      "Bash(rm -f .git/index.lock && git add -A && git commit -m \"$\\(cat <<'EOF'\nAdd server deployment scripts and Railway config\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

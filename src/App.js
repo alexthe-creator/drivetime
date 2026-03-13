@@ -720,19 +720,35 @@ const SettingsScreen = React.memo(function SettingsScreen({ onBack, settings, on
 
   useEffect(() => {
     let retryCount = 0;
+    // Ranked preference: best-sounding voices first
+    const PREFERRED_VOICES = [
+      "siri",          // Siri voices (best on iOS)
+      "samantha",      // High quality iOS default
+      "karen",         // Good Australian English
+      "daniel",        // Good British English
+      "ava",           // Only available in native apps, but check anyway
+      "allison",       // Decent US English
+      "microsoft zira", // Good Windows voice
+      "google us",     // Chrome's US English
+    ];
+    const pickBest = (available) => {
+      for (const pref of PREFERRED_VOICES) {
+        const match = available.find(v => v.name.toLowerCase().includes(pref));
+        if (match) return match;
+      }
+      return available[0] || null;
+    };
     const load = () => {
       const available = speechSynthesis.getVoices().filter(v => v.lang.startsWith("en"));
       setVoices(available);
       if (!voiceName && available.length) {
-        const preferred = available.find(v => v.name.toLowerCase().includes("ava"))
-          || available.find(v => v.name.toLowerCase().includes("samantha"))
-          || available.find(v => v.name.toLowerCase().includes("siri"));
-        if (preferred) setVoiceName(preferred.name);
+        const best = pickBest(available);
+        if (best) setVoiceName(best.name);
       }
     };
     load();
     speechSynthesis.onvoiceschanged = load;
-    // iOS sometimes loads premium voices late — poll a few times
+    // iOS sometimes loads voices late — poll a few times
     const poller = setInterval(() => {
       retryCount++;
       load();
