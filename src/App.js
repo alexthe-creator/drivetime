@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ============================================================
 // READING PLAN DATA
@@ -132,12 +132,23 @@ function useTTS(voiceName) {
 }
 
 // ============================================================
-// CHIME
+// CHIME (reuse a single AudioContext for performance)
 // ============================================================
+let _sharedAudioCtx = null;
+function getAudioContext() {
+  if (!_sharedAudioCtx || _sharedAudioCtx.state === "closed") {
+    _sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (_sharedAudioCtx.state === "suspended") {
+    _sharedAudioCtx.resume().catch(() => {});
+  }
+  return _sharedAudioCtx;
+}
+
 function playChime() {
   return new Promise(res => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = getAudioContext();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -149,7 +160,7 @@ function playChime() {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 2);
-      setTimeout(() => { ctx.close(); res(); }, 2200);
+      setTimeout(res, 2200);
     } catch (e) { setTimeout(res, 2000); }
   });
 }
@@ -247,10 +258,13 @@ function App() {
     return () => { if (lock) lock.release().catch(() => {}); };
   }, [screen]);
 
-  const hr = new Date().getHours();
-  const greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
-  const today = new Date().toISOString().slice(0, 10);
-  const todayPlan = READING_PLAN.find(r => r.date === today) || READING_PLAN[0];
+  const { greeting, today, todayPlan } = useMemo(() => {
+    const hr = new Date().getHours();
+    const g = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+    const t = new Date().toISOString().slice(0, 10);
+    const plan = READING_PLAN.find(r => r.date === t) || READING_PLAN[0];
+    return { greeting: g, today: t, todayPlan: plan };
+  }, [time]); // recalculate when time updates
 
   const handleVoiceCmd = useCallback((cmd) => {
     if (cmd === "pause") tts.pause();
@@ -327,7 +341,7 @@ function App() {
 // ============================================================
 // BREAD SCREEN
 // ============================================================
-function BREADScreen({ plan, tts, voice, settings, onBack }) {
+const BREADScreen = React.memo(function BREADScreen({ plan, tts, voice, settings, onBack }) {
   const [step, setStep] = useState(0);
   const [silenceLeft, setSilenceLeft] = useState(0);
   const [waiting, setWaiting] = useState(false);
@@ -503,12 +517,12 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
       )}
     </div>
   );
-}
+});
 
 // ============================================================
 // NEWSLETTER SCREEN
 // ============================================================
-function NewsletterScreen({ tts, voice, settings, onBack }) {
+const NewsletterScreen = React.memo(function NewsletterScreen({ tts, voice, settings, onBack }) {
   const [source, setSource] = useState("ft");
   const [playing, setPlaying] = useState(false);
   const [sections, setSections] = useState([]);
@@ -636,12 +650,12 @@ function NewsletterScreen({ tts, voice, settings, onBack }) {
       )}
     </div>
   );
-}
+});
 
 // ============================================================
 // SETTINGS SCREEN
 // ============================================================
-function SettingsScreen({ onBack, settings, onSettings }) {
+const SettingsScreen = React.memo(function SettingsScreen({ onBack, settings, onSettings }) {
   const [speed, setSpeed] = useState(settings?.speed || 1);
   const [bibleSpeed1, setBibleSpeed1] = useState(settings?.bibleSpeed1 || 1);
   const [bibleSpeed2, setBibleSpeed2] = useState(settings?.bibleSpeed2 || 0.8);
@@ -719,18 +733,18 @@ function SettingsScreen({ onBack, settings, onSettings }) {
       </button>
     </div>
   );
-}
+});
 
-function SectionBox({ title, children }) {
+const SectionBox = React.memo(function SectionBox({ title, children }) {
   return (
     <div style={{ marginBottom: 24 }}>
       <h3 style={{ fontSize: 13, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, margin: "0 0 12px" }}>{title}</h3>
       <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid #1e293b", borderRadius: 14, padding: "12px 16px" }}>{children}</div>
     </div>
   );
-}
+});
 
-function SliderRow({ label, value, onChange }) {
+const SliderRow = React.memo(function SliderRow({ label, value, onChange }) {
   return (
     <div style={{ padding: "8px 0" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
@@ -740,6 +754,6 @@ function SliderRow({ label, value, onChange }) {
       <input type="range" min={0.5} max={2} step={0.1} value={value} onChange={e => onChange(+e.target.value)} style={{ width: "100%", accentColor: "#6366f1" }} />
     </div>
   );
-}
+});
 
 export default App;
