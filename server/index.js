@@ -40,11 +40,15 @@ app.get("/api/newsletters", async (req, res) => {
 });
 
 async function fetchAndCache(type, date, threshold) {
-  // Return cached version if available and has content
+  // Return cached version if available, has content, AND is from today
   const cached = getNewsletter(type, date);
   if (cached && cached.sections && cached.sections.length > 0) {
-    console.log(`Returning cached ${type} for ${date}`);
-    return { subject: cached.subject, date: cached.email_date, sections: cached.sections };
+    const cachedEmailDate = cached.email_date ? new Date(cached.email_date).toISOString().slice(0, 10) : null;
+    if (cachedEmailDate === date) {
+      console.log(`Returning cached ${type} for ${date}`);
+      return { subject: cached.subject, date: cached.email_date, sections: cached.sections };
+    }
+    console.log(`Cached ${type} is from ${cachedEmailDate}, re-fetching for ${date}`);
   }
 
   // Fetch raw email
