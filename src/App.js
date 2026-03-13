@@ -112,15 +112,21 @@ function useTTS(voiceName) {
     }
     onEndRef.current = onEnd;
     u.onend = () => { setSpeaking(false); setPaused(false); if (onEndRef.current) onEndRef.current(); };
-    u.onerror = () => { setSpeaking(false); setPaused(false); if (onEndRef.current) onEndRef.current(); };
+    u.onerror = (e) => { setSpeaking(false); setPaused(false); if (e.error !== "canceled" && e.error !== "interrupted" && onEndRef.current) onEndRef.current(); };
     setSpeaking(true);
     setPaused(false);
-    synth.speak(u);
+    setTimeout(() => synth.speak(u), 100);
   }, [synth, voiceName]);
 
   const pause = useCallback(() => { synth.pause(); setPaused(true); }, [synth]);
   const resume = useCallback(() => { synth.resume(); setPaused(false); }, [synth]);
   const stop = useCallback(() => { synth.cancel(); setSpeaking(false); setPaused(false); }, [synth]);
+
+  useEffect(() => {
+    if (!speaking || paused) return;
+    const id = setInterval(() => { synth.pause(); synth.resume(); }, 10000);
+    return () => clearInterval(id);
+  }, [speaking, paused, synth]);
 
   return { speak, pause, resume, stop, speaking, paused };
 }
@@ -144,7 +150,7 @@ function playChime() {
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 2);
       setTimeout(() => { ctx.close(); res(); }, 2200);
-    } catch (e) { res(); }
+    } catch (e) { setTimeout(res, 2000); }
   });
 }
 
@@ -232,6 +238,14 @@ function App() {
     const i = setInterval(tick, 30000);
     return () => clearInterval(i);
   }, []);
+
+  useEffect(() => {
+    if (screen === "dashboard") return;
+    if (!("wakeLock" in navigator)) return;
+    let lock = null;
+    navigator.wakeLock.request("screen").then(l => { lock = l; }).catch(() => {});
+    return () => { if (lock) lock.release().catch(() => {}); };
+  }, [screen]);
 
   const hr = new Date().getHours();
   const greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
@@ -323,6 +337,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
   const [translation, setTranslation] = useState("KJV");
   const activeRef = useRef(true);
   const skipBeStillRef = useRef(false);
+  const [stepKey, setStepKey] = useState(0);
   const currentStep = STEPS[step];
 
   useEffect(() => {
@@ -406,7 +421,7 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
     } else if (s === "complete") {
       tts.speak("Amen. Today's devotional is complete.", 1, () => {});
     }
-  }, [step, started]);
+  }, [step, started, stepKey]);
 
   useEffect(() => { voice.start(); return () => voice.stop(); }, []);
   useEffect(() => () => { activeRef.current = false; tts.stop(); }, []);
@@ -444,14 +459,19 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
           <div>
             <h2 style={{ fontSize: 28, fontWeight: 700, margin: "0 0 8px" }}>{STEP_LABELS[currentStep] || "Complete"}</h2>
             {currentStep !== "complete" && <p style={{ color: "#94a3b8", fontSize: 15, margin: "0 0 24px" }}>{plan.ref}</p>}
-            {currentStep === "beStill" && silenceLeft > 0 && (
+            {currentStep === "beStill" && (
               <div style={{ margin: "32px auto" }}>
-                <svg width="140" height="140" viewBox="0 0 140 140">
-                  <circle cx="70" cy="70" r="60" fill="none" stroke="#1e293b" strokeWidth="4" />
-                  <circle cx="70" cy="70" r="60" fill="none" stroke="#818cf8" strokeWidth="4" strokeDasharray={377} strokeDashoffset={377 * (silenceLeft / (settings?.beStill || 60))} strokeLinecap="round" transform="rotate(-90 70 70)" style={{ transition: "stroke-dashoffset 1s linear" }} />
-                </svg>
-                <div style={{ marginTop: -90, fontSize: 32, fontWeight: 300, color: "#e2e8f0" }}>{Math.floor(silenceLeft / 60)}:{String(silenceLeft % 60).padStart(2, "0")}</div>
-                <div style={{ marginTop: 48, fontSize: 14, color: "#64748b" }}>Be still...</div>
+                {silenceLeft > 0 && (
+                  <div style={{ marginBottom: 40 }}>
+                    <svg width="140" height="140" viewBox="0 0 140 140">
+                      <circle cx="70" cy="70" r="60" fill="none" stroke="#1e293b" strokeWidth="4" />
+                      <circle cx="70" cy="70" r="60" fill="none" stroke="#818cf8" strokeWidth="4" strokeDasharray={377} strokeDashoffset={377 * (silenceLeft / (settings?.beStill || 60))} strokeLinecap="round" transform="rotate(-90 70 70)" style={{ transition: "stroke-dashoffset 1s linear" }} />
+                    </svg>
+                    <div style={{ marginTop: -90, fontSize: 32, fontWeight: 300, color: "#e2e8f0" }}>{Math.floor(silenceLeft / 60)}:{String(silenceLeft % 60).padStart(2, "0")}</div>
+                    <div style={{ marginTop: 48, fontSize: 14, color: "#64748b" }}>Be still...</div>
+                  </div>
+                )}
+                <button onClick={skipToNext} style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 16, color: "white", fontSize: 18, fontWeight: 600, padding: "16px 56px", cursor: "pointer" }}>Continue</button>
               </div>
             )}
             {waiting && (
@@ -471,13 +491,14 @@ function BREADScreen({ plan, tts, voice, settings, onBack }) {
           </div>
         )}
       </div>
-      {started && currentStep !== "complete" && (
+      {started && ["firstReading", "secondReading"].includes(currentStep) && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "20px", display: "flex", justifyContent: "center", gap: 24, background: "linear-gradient(transparent, #0f172a)" }}>
+          {["firstReading", "secondReading"].includes(currentStep) && (
+            <button onClick={() => { tts.stop(); setStepKey(k => k + 1); }} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "#94a3b8", fontSize: 24, cursor: "pointer" }}>⏮</button>
+          )}
           <button onClick={tts.paused ? tts.resume : tts.pause} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#e2e8f0", fontSize: 24, cursor: "pointer" }}>{tts.paused ? "▶" : "⏸"}</button>
           <button onClick={() => { activeRef.current = false; tts.stop(); onBack(); }} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", color: "#fca5a5", fontSize: 24, cursor: "pointer" }}>■</button>
-          {["beStill", "firstReading", "secondReading"].includes(currentStep) && (
-            <button onClick={skipToNext} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc", fontSize: 24, cursor: "pointer" }}>⏭</button>
-          )}
+          <button onClick={skipToNext} style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc", fontSize: 24, cursor: "pointer" }}>⏭</button>
         </div>
       )}
     </div>
